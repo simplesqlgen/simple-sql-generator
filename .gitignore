@@ -44,6 +44,7 @@ bin/
 ### GPG Keys ###
 *.gpg
 *.asc
+private.key
 
 ### Gradle Properties ###
 gradle.properties
