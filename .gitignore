@@ -5,10 +5,7 @@ build/
 !**/src/test/**/build/
 
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+.idea/
 *.iws
 *.iml
 *.ipr
@@ -37,6 +34,9 @@ bin/
 
 ### VS Code ###
 .vscode/
+
+### Claude Code ###
+.claude/
 
 ### Mac OS ###
 .DS_Store
