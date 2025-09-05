@@ -1,0 +1,100 @@
+name: Release to Maven Central
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+          
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      
+    - name: Extract version from tag
+      id: extract_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+    - name: Update version in build.gradle
+      run: |
+        sed -i "s/version = '[^']*'/version = '${{ steps.extract_version.outputs.VERSION }}'/" build.gradle
+        
+    - name: Create GPG key file
+      run: |
+        echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode > private.key
+        
+    - name: Build and publish
+      env:
+        SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+        SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+      run: |
+        ./gradlew clean build publishToMavenLocal
+        
+    - name: Create release bundle
+      run: |
+        cd ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}
+        
+        # Generate checksums
+        for file in *.jar *.pom *.module; do
+          md5sum "$file" | cut -d' ' -f1 > "$file.md5"
+          sha1sum "$file" | cut -d' ' -f1 > "$file.sha1"
+        done
+        
+        # Create directory structure
+        mkdir -p io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}
+        cp *.jar *.pom *.asc *.module *.md5 *.sha1 io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}/
+        
+        # Create ZIP bundle
+        zip -r simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip io/
+        
+    - name: Upload to GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}/simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip
+        body: |
+          ## 🚀 Release ${{ steps.extract_version.outputs.VERSION }}
+          
+          ### Maven Dependency
+          ```gradle
+          dependencies {
+              implementation 'io.github.simplesqlgen:simple-sql-generator:${{ steps.extract_version.outputs.VERSION }}'
+          }
+          ```
+          
+          ### Manual Upload to Maven Central
+          1. Download the ZIP bundle from this release
+          2. Go to https://central.sonatype.com
+          3. Upload the ZIP file
+          4. Click Publish
+          
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Clean up
+      run: rm -f private.key
