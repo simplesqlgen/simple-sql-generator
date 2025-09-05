@@ -1,0 +1,118 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'signing'
+}
+
+group = 'io.github.simplesqlgen'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // AutoService (Annotation Processor 자동 등록)
+    implementation 'com.google.auto.service:auto-service:1.1.1'
+    annotationProcessor 'com.google.auto.service:auto-service:1.1.1'
+
+    // 유틸리티 (코드 생성 편의)
+    implementation 'org.apache.commons:commons-lang3:3.18.0'
+
+    // NOTE: 이 모듈은 컴파일 타임 전용(annotation processor)입니다.
+    // 런타임 DB 관련 의존성은 mysql-starter 모듈로 이전했습니다.
+    // 테스트
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+}
+
+javadoc {
+    options.encoding = 'UTF-8'
+    options.charSet = 'UTF-8'
+    options.docEncoding = 'UTF-8'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+java {
+    withSourcesJar()
+}
+
+// Javadoc 오류 무시하고 빈 Javadoc JAR 생성
+javadoc {
+    options.encoding = 'UTF-8'
+    options.charSet = 'UTF-8' 
+    options.docEncoding = 'UTF-8'
+    options.addBooleanOption('Xdoclint:none', true)
+    options.addBooleanOption('quiet', true)
+    failOnError = false
+}
+
+task javadocJar(type: Jar) {
+    archiveClassifier = 'javadoc'
+    from javadoc
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            
+            artifact javadocJar
+            
+            pom {
+                name = 'Simple SQL Generator'
+                description = 'Compile-time SQL generation with zero runtime overhead for Java applications'
+                url = 'https://github.com/simplesqlgen/simple-sql-generator'
+                
+                licenses {
+                    license {
+                        name = 'Apache License 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0'
+                    }
+                }
+                
+                developers {
+                    developer {
+                        id = 'simplesqlgen'
+                        name = 'Simple SQL Generator Team'
+                        email = 'contact@simplesqlgen.io'
+                    }
+                }
+                
+                scm {
+                    connection = 'scm:git:git://github.com/simplesqlgen/simple-sql-generator.git'
+                    developerConnection = 'scm:git:ssh://github.com:simplesqlgen/simple-sql-generator.git'
+                    url = 'https://github.com/simplesqlgen/simple-sql-generator'
+                }
+            }
+        }
+    }
+    
+    // Maven Central Portal은 직접 업로드 방식 사용
+    // ./gradlew publishAllPublicationsToMavenLocalRepository로 로컬에 생성 후
+    // central.sonatype.com에서 수동 업로드
+}
+
+signing {
+    required { gradle.taskGraph.hasTask("publishToMavenLocal") }
+    sign publishing.publications.maven
+}
+
+// Maven Central Portal 배포 방법:
+// 1. GPG 키 생성: gpg --gen-key
+// 2. 공개키 업로드: gpg --keyserver keyserver.ubuntu.com --send-keys YOUR_KEY_ID
+// 3. gradle.properties에 다음 설정:
+//    signing.keyId=your_key_id
+//    signing.password=your_key_password  
+//    signing.secretKeyRingFile=~/.gnupg/secring.gpg
+// 4. 로컬 빌드: ./gradlew publishToMavenLocal
+// 5. ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/1.0.0/ 폴더의 
+//    모든 파일(.jar, .pom, .asc)을 ZIP으로 압축
+// 6. central.sonatype.com에서 ZIP 파일 업로드
