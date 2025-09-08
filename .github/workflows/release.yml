@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -48,15 +51,21 @@ jobs:
         VERSION=${{ steps.extract_version.outputs.VERSION }}
         MAVEN_DIR=~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/$VERSION
         
+        echo "🔍 Looking for Maven directory: $MAVEN_DIR"
+        
         # Check if directory exists
         if [ ! -d "$MAVEN_DIR" ]; then
           echo "❌ Maven directory not found: $MAVEN_DIR"
-          find ~/.m2 -name "*simple-sql-generator*" -type d | head -10
+          echo "🔍 Searching for simple-sql-generator directories:"
+          find ~/.m2 -name "*simple-sql-generator*" -type d 2>/dev/null | head -10
+          echo "🔍 Contents of ~/.m2/repository:"
+          find ~/.m2/repository -maxdepth 3 -type d 2>/dev/null | head -20
           exit 1
         fi
         
         cd "$MAVEN_DIR"
         echo "📁 Working in: $(pwd)"
+        echo "📄 Files found:"
         ls -la
         
         # Generate checksums for existing files
@@ -68,18 +77,33 @@ jobs:
           fi
         done
         
+        echo "📦 Files before bundling:"
+        ls -la
+        
         # Create directory structure
         mkdir -p io/github/simplesqlgen/simple-sql-generator/$VERSION
         
         # Copy all files (including signatures)
         for ext in jar pom asc module md5 sha1; do
-          cp *.$ext io/github/simplesqlgen/simple-sql-generator/$VERSION/ 2>/dev/null || echo "⚠️ No .$ext files found"
+          if ls *.$ext >/dev/null 2>&1; then
+            echo "📋 Copying *.$ext files"
+            cp *.$ext io/github/simplesqlgen/simple-sql-generator/$VERSION/
+          else
+            echo "⚠️ No .$ext files found"
+          fi
         done
+        
+        echo "📦 Bundle directory contents:"
+        find io/ -type f | sort
         
         # Create ZIP bundle
         zip -r simple-sql-generator-$VERSION-bundle.zip io/
         echo "✅ Created bundle: simple-sql-generator-$VERSION-bundle.zip"
         ls -la *.zip
+        
+        # Verify ZIP contents
+        echo "📋 ZIP contents:"
+        unzip -l simple-sql-generator-$VERSION-bundle.zip
         
     - name: Upload to GitHub Release
       uses: softprops/action-gh-release@v1
