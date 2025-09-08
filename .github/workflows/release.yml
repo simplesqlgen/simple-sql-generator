@@ -42,7 +42,12 @@ jobs:
         
     - name: Create GPG key file
       run: |
-        echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode > private.key
+        if [ -z "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+          echo "⚠️ GPG_PRIVATE_KEY secret not set, creating dummy key file"
+          touch private.key
+        else
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode > private.key
+        fi
         
     - name: Build and publish
       env:
@@ -51,6 +56,7 @@ jobs:
         SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
         SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
       run: |
+        chmod +x gradlew
         ./gradlew clean build publishToMavenLocal
         
     - name: Create release bundle
