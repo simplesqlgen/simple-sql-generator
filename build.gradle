@@ -104,16 +104,11 @@ signing {
     def keyId = findProperty("signing.keyId")
     def password = findProperty("signing.password") ?: ""
     def keyFile = file("private.key")
-    if (!keyFile.exists()) {
-        keyFile = file("${System.getProperty('user.home')}/.gnupg/private.key")
-    }
     
-    if (keyId && keyFile.exists() && keyFile.length() > 0) {
+    if (keyId && keyFile.exists()) {
         def secretKey = keyFile.text
         useInMemoryPgpKeys(keyId, secretKey, password)
         sign publishing.publications.maven
-    } else {
-        println "⚠️ Signing disabled: GPG key file not found or empty"
     }
 }
 

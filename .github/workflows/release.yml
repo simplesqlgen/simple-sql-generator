@@ -42,12 +42,7 @@ jobs:
         
     - name: Create GPG key file
       run: |
-        if [ -z "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-          echo "⚠️ GPG_PRIVATE_KEY secret not set, creating dummy key file"
-          touch private.key
-        else
-          echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode > private.key
-        fi
+        echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode > private.key
         
     - name: Build and publish
       env:
