@@ -56,20 +56,41 @@ jobs:
         
     - name: Create release bundle
       run: |
-        cd ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}
+        VERSION=${{ steps.extract_version.outputs.VERSION }}
+        MAVEN_DIR=~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/$VERSION
         
-        # Generate checksums
+        # Check if directory exists
+        if [ ! -d "$MAVEN_DIR" ]; then
+          echo "❌ Maven directory not found: $MAVEN_DIR"
+          find ~/.m2 -name "*simple-sql-generator*" -type d | head -10
+          exit 1
+        fi
+        
+        cd "$MAVEN_DIR"
+        echo "📁 Working in: $(pwd)"
+        ls -la
+        
+        # Generate checksums for existing files
         for file in *.jar *.pom *.module; do
-          md5sum "$file" | cut -d' ' -f1 > "$file.md5"
-          sha1sum "$file" | cut -d' ' -f1 > "$file.sha1"
+          if [ -f "$file" ]; then
+            echo "🔐 Generating checksums for $file"
+            md5sum "$file" | cut -d' ' -f1 > "$file.md5"
+            sha1sum "$file" | cut -d' ' -f1 > "$file.sha1"
+          fi
         done
         
         # Create directory structure
-        mkdir -p io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}
-        cp *.jar *.pom *.asc *.module *.md5 *.sha1 io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}/
+        mkdir -p io/github/simplesqlgen/simple-sql-generator/$VERSION
+        
+        # Copy all files (including signatures)
+        for ext in jar pom asc module md5 sha1; do
+          cp *.$ext io/github/simplesqlgen/simple-sql-generator/$VERSION/ 2>/dev/null || echo "⚠️ No .$ext files found"
+        done
         
         # Create ZIP bundle
-        zip -r simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip io/
+        zip -r simple-sql-generator-$VERSION-bundle.zip io/
+        echo "✅ Created bundle: simple-sql-generator-$VERSION-bundle.zip"
+        ls -la *.zip
         
     - name: Upload to GitHub Release
       uses: softprops/action-gh-release@v1
