@@ -3,12 +3,11 @@ package io.github.simplesqlgen.processor.query;
 import io.github.simplesqlgen.enums.ResultMappingType;
 
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.type.TypeMirror;
 import java.util.List;
 
 /**
- * 쿼리 실행 코드 생성을 담당하는 클래스
- * Named Parameter와 Positional Parameter 쿼리 실행 코드를 생성
+ * Query execution code generator
+ * Generates Named Parameter and Positional Parameter query execution code
  */
 public class QueryExecutor {
     
@@ -19,66 +18,60 @@ public class QueryExecutor {
     }
 
     /**
-     * Named Parameter 쿼리 실행 생성
+     * Create Named Parameter query execution
      */
     public Object createNamedParameterQueryExecution(String sql, ExecutableElement methodElement,
                                                     boolean isUpdate, ResultMappingType mappingType,
                                                     String resultTypeClass, String columnMapping,
-                                                    List<?> methodParams) throws Exception {
+                                                    List<?> methodParams, boolean isVoid) throws Exception {
         
-        // SQL 리터럴 생성
         Object sqlLiteral = createLiteral(sql);
-        
-        // NamedParameterJdbcTemplate 필드 접근 (올바른 필드 사용)
         Object namedJdbcTemplateAccess = createFieldAccess("this", "namedParameterJdbcTemplate");
-        
-        // MapSqlParameterSource 생성
         Object paramSourceVar = createParameterSourceCreation(methodParams);
         
         Object queryCall;
         
         if (isUpdate) {
-            // UPDATE/INSERT/DELETE 쿼리
             queryCall = createUpdateQuery(namedJdbcTemplateAccess, sqlLiteral, paramSourceVar);
         } else {
-            // SELECT 쿼리
             queryCall = createNamedParameterSelectQuery(namedJdbcTemplateAccess, sqlLiteral, paramSourceVar,
                     mappingType, resultTypeClass, columnMapping, methodElement);
         }
         
+        if (isVoid) {
+            return createExpressionStatement(queryCall);
+        }
         return createReturnStatement(queryCall);
     }
 
     /**
-     * Positional Parameter 쿼리 실행 생성
+     * Create Positional Parameter query execution
      */
     public Object createPositionalParameterQueryExecution(String sql, ExecutableElement methodElement,
                                                          boolean isUpdate, ResultMappingType mappingType,
                                                          String resultTypeClass, String columnMapping,
-                                                         List<?> methodParams) throws Exception {
+                                                         List<?> methodParams, boolean isVoid) throws Exception {
         
-        // JdbcTemplate 필드 접근
         Object jdbcTemplateAccess = createFieldAccess("this", "jdbcTemplate");
-        
-        // SQL 리터럴 직접 사용 (동적 SQL 처리는 나중에 구현)
         Object sqlLiteral = createLiteral(sql);
         
         Object queryCall;
         
         if (isUpdate) {
-            // UPDATE/INSERT/DELETE 쿼리
             queryCall = createPositionalUpdateQuery(jdbcTemplateAccess, sqlLiteral, methodParams);
         } else {
-            // SELECT 쿼리
             queryCall = createPositionalSelectQuery(jdbcTemplateAccess, sqlLiteral, methodParams,
                     mappingType, resultTypeClass, columnMapping, methodElement);
         }
         
+        if (isVoid) {
+            return createExpressionStatement(queryCall);
+        }
         return createReturnStatement(queryCall);
     }
 
     /**
-     * Named Parameter SELECT 쿼리 생성
+     * Create Named Parameter SELECT query
      */
     public Object createNamedParameterSelectQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource,
                                                  ResultMappingType mappingType, String resultTypeClass,
@@ -99,143 +92,192 @@ public class QueryExecutor {
     }
 
     /**
-     * 자동 매핑 쿼리 생성
+     * Create auto mapping query
      */
-    public Object createAutoMappingQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource,
-                                        String resultTypeClass, ExecutableElement methodElement) throws Exception {
-        
-        TypeMirror returnType = methodElement.getReturnType();
-        String returnTypeStr = returnType.toString();
-        
+    public Object createAutoMappingQuery(
+            Object namedJdbcTemplate,
+            Object sqlLiteral,
+            Object paramSource,
+            String resultTypeClass,
+            ExecutableElement methodElement
+    ) throws Exception {
+
+        String returnTypeStr = methodElement.getReturnType().toString();
+
         if (returnTypeStr.startsWith("java.util.List")) {
-            // List 반환 타입
+
             if (returnTypeStr.contains("Map<String") || returnTypeStr.contains("Map<java.lang.String")) {
-                // Map 타입인 경우 ColumnMapRowMapper 사용
                 Object columnMapRowMapper = createColumnMapRowMapper();
-                // NamedParameterJdbcTemplate.query(String sql, SqlParameterSource ps, RowMapper<T> rm)
-                return createMethodCall(createFieldAccess(namedJdbcTemplate, "query"), sqlLiteral, paramSource, columnMapRowMapper);
+                return createMethodCall(
+                        createFieldAccess(namedJdbcTemplate, "query"),
+                        sqlLiteral,
+                        paramSource,
+                        columnMapRowMapper
+                );
             } else {
-                // 엔티티 타입인 경우 BeanPropertyRowMapper 사용
                 Object rowMapper = createBeanPropertyRowMapper(resultTypeClass);
-                // NamedParameterJdbcTemplate.query(String sql, SqlParameterSource ps, RowMapper<T> rm)
-                return createMethodCall(createFieldAccess(namedJdbcTemplate, "query"), sqlLiteral, paramSource, rowMapper);
+                return createMethodCall(
+                        createFieldAccess(namedJdbcTemplate, "query"),
+                        sqlLiteral,
+                        paramSource,
+                        rowMapper
+                );
             }
-        } else if (isSimpleType(resultTypeClass)) {
-            // 단순 타입인 경우 (Long, Integer, String 등) - 타입 명시적 변수 선언으로 해결
-            Object classLiteral = createClassLiteral(getFullTypeName(resultTypeClass));
-            // NamedParameterJdbcTemplate.queryForObject(String sql, SqlParameterSource ps, Class<T> requiredType)
-            Object queryCall = createMethodCall(createFieldAccess(namedJdbcTemplate, "queryForObject"), sqlLiteral, paramSource, classLiteral);
-            
-            // 컴파일러가 제네릭 정보를 잃는 경우를 대비해 명시적 캐스팅 적용
-            return createTypeCastExpression(queryCall, resultTypeClass);
-        } else if (returnTypeStr.startsWith("java.util.Optional")) {
-            // Optional 타입 처리 - 최소 구현: Optional.empty() 반환 (제네릭 추론 이슈 회피)
+
+        }
+
+        else if (isSimpleType(resultTypeClass)) {
+            Object classLiteral = createClassLiteral(resultTypeClass);
+            Object queryCall = createMethodCall(
+                    createFieldAccess(namedJdbcTemplate, "queryForObject"),
+                    sqlLiteral,
+                    paramSource,
+                    classLiteral
+            );
+
+            if (isPrimitive(resultTypeClass)) {
+                return queryCall;
+            } else {
+                return createTypeCastExpression(queryCall, resultTypeClass);
+            }
+        }
+
+        else if (returnTypeStr.startsWith("java.util.Optional")) {
             return createOptionalEmpty();
-        } else {
-            // 복합 객체 반환 타입
+        }
+
+        else {
             Object rowMapper = createBeanPropertyRowMapper(resultTypeClass);
-            // NamedParameterJdbcTemplate.queryForObject(String sql, SqlParameterSource ps, RowMapper<T> rm)
-            return createMethodCall(createFieldAccess(namedJdbcTemplate, "queryForObject"), sqlLiteral, paramSource, rowMapper);
+            Object queryCall = createMethodCall(
+                    createFieldAccess(namedJdbcTemplate, "queryForObject"),
+                    sqlLiteral,
+                    paramSource,
+                    rowMapper
+            );
+            return createTypeCastExpression(queryCall, resultTypeClass);
         }
     }
 
     /**
-     * 수동 매핑 쿼리 생성
+     * Create manual mapping query
      */
     public Object createManualMappingQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource,
                                           String resultTypeClass, String columnMapping) throws Exception {
-        // 수동 매핑 로직 구현
         Object rowMapper = createManualRowMapper(resultTypeClass, columnMapping);
-        // NamedParameterJdbcTemplate.query(String sql, SqlParameterSource ps, RowMapper<T> rm)
         return createMethodCall(createFieldAccess(namedJdbcTemplate, "query"), sqlLiteral, paramSource, rowMapper);
     }
 
     /**
-     * Bean Property 매핑 쿼리 생성
+     * Create Bean Property mapping query
      */
     public Object createBeanPropertyMappingQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource,
                                                 String resultTypeClass) throws Exception {
         Object rowMapper = createBeanPropertyRowMapper(resultTypeClass);
-        // NamedParameterJdbcTemplate.query(String sql, SqlParameterSource ps, RowMapper<T> rm)
         return createMethodCall(createFieldAccess(namedJdbcTemplate, "query"), sqlLiteral, paramSource, rowMapper);
     }
 
     /**
-     * 중첩 매핑 쿼리 생성
+     * Create nested mapping query
      */
     public Object createNestedMappingQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource,
                                           String resultTypeClass, String columnMapping) throws Exception {
-        // 중첩 매핑 로직 구현
         Object rowMapper = createNestedRowMapper(resultTypeClass, columnMapping);
-        // NamedParameterJdbcTemplate.query(String sql, SqlParameterSource ps, RowMapper<T> rm)
         return createMethodCall(createFieldAccess(namedJdbcTemplate, "query"), sqlLiteral, paramSource, rowMapper);
     }
 
     /**
-     * 동적 SQL 처리 생성
+     * Create dynamic SQL processing
      */
     public Object createDynamicSqlProcessing(String sql, List<?> methodParams) throws Exception {
-        // Collection 타입 파라미터 처리를 위한 동적 SQL 생성
-        
-        // SQL을 StringBuilder로 변환하는 로직
         Object sqlBuilderVar = createVariable("sqlBuilder", "StringBuilder");
         Object sqlBuilderInit = createNewStringBuilder(sql);
         
-        // Collection 파라미터들에 대한 처리
         for (Object param : methodParams) {
             if (isCollectionParameter(param)) {
-                // IN 절 처리를 위한 동적 SQL 생성
                 Object collectionProcessing = createCollectionProcessing(param);
-                // sqlBuilder에 추가하는 로직
             }
         }
         
         return createMethodCall(createFieldAccess(sqlBuilderVar, "toString"));
     }
 
-    /**
-     * Positional SELECT 쿼리 생성
-     */
-    public Object createPositionalSelectQuery(Object jdbcTemplate, Object sqlLiteral, List<?> methodParams,
-                                             ResultMappingType mappingType, String resultTypeClass,
-                                             String columnMapping, ExecutableElement methodElement) throws Exception {
+    public Object createPositionalSelectQuery(
+            Object jdbcTemplate,
+            Object sqlLiteral,
+            List<?> methodParams,
+            ResultMappingType mappingType,
+            String resultTypeClass,
+            String columnMapping,
+            ExecutableElement methodElement
+    ) throws Exception {
+
+        Object paramArgs = null;
+        if (methodParams != null && !methodParams.isEmpty()) {
+            if (methodParams.size() == 1) {
+                paramArgs = createParameterExpression(methodParams.get(0));
+            } else {
+                paramArgs = createParameterArray(methodParams);
+            }
+        }
         
-        Object paramArray = createParameterArray(methodParams);
-        
-        if (isListReturnType(methodElement)) {
-            Object rowMapper = createBeanPropertyRowMapper(resultTypeClass);
+        String returnTypeStr = methodElement.getReturnType().toString();
+
+        if (returnTypeStr.startsWith("java.util.List")) {
+
+            Object rowMapper;
+            if (returnTypeStr.contains("Map<String") || returnTypeStr.contains("Map<java.lang.String")) {
+                rowMapper = createColumnMapRowMapper();
+            } else {
+                rowMapper = createBeanPropertyRowMapper(resultTypeClass);
+            }
+
             if (methodParams.isEmpty()) {
                 return createMethodCall(createFieldAccess(jdbcTemplate, "query"), sqlLiteral, rowMapper);
             } else {
-                return createMethodCall(createFieldAccess(jdbcTemplate, "query"), sqlLiteral, rowMapper, paramArray);
+                return createMethodCall(createFieldAccess(jdbcTemplate, "query"), sqlLiteral, rowMapper, paramArgs);
             }
-        } else {
-            // 단일 객체 반환
+        }
+
+        else {
+
             if (isSimpleType(resultTypeClass)) {
                 Object queryCall;
                 if (methodParams.isEmpty()) {
-                    queryCall = createMethodCall(createFieldAccess(jdbcTemplate, "queryForObject"), sqlLiteral, 
-                            createClassLiteral(getFullTypeName(resultTypeClass)));
+                    queryCall = createMethodCall(
+                            createFieldAccess(jdbcTemplate, "queryForObject"),
+                            sqlLiteral,
+                            createClassLiteral(getFullTypeName(resultTypeClass))
+                    );
                 } else {
-                    queryCall = createMethodCall(createFieldAccess(jdbcTemplate, "queryForObject"), sqlLiteral, 
-                            createClassLiteral(getFullTypeName(resultTypeClass)), paramArray);
+                    queryCall = createMethodCall(
+                            createFieldAccess(jdbcTemplate, "queryForObject"),
+                            sqlLiteral,
+                            createClassLiteral(getFullTypeName(resultTypeClass)),
+                            paramArgs
+                    );
                 }
-                
-                // 컴파일러가 제네릭 정보를 잃는 경우를 대비해 명시적 캐스팅 적용
-                return createTypeCastExpression(queryCall, resultTypeClass);
+
+                if (isPrimitive(resultTypeClass)) {
+                    return queryCall;
+                } else {
+                    return createTypeCastExpression(queryCall, resultTypeClass);
+                }
             } else {
                 Object rowMapper = createBeanPropertyRowMapper(resultTypeClass);
+                Object queryCall;
                 if (methodParams.isEmpty()) {
-                    return createMethodCall(createFieldAccess(jdbcTemplate, "queryForObject"), sqlLiteral, rowMapper);
+                    queryCall = createMethodCall(createFieldAccess(jdbcTemplate, "queryForObject"), sqlLiteral, rowMapper);
                 } else {
-                    return createMethodCall(createFieldAccess(jdbcTemplate, "queryForObject"), sqlLiteral, rowMapper, paramArray);
+                    queryCall = createMethodCall(createFieldAccess(jdbcTemplate, "queryForObject"), sqlLiteral, rowMapper, paramArgs);
                 }
+
+                return createTypeCastExpression(queryCall, resultTypeClass);
             }
         }
     }
 
     /**
-     * Positional UPDATE 쿼리 생성
+     * Create Positional UPDATE query
      */
     public Object createPositionalUpdateQuery(Object jdbcTemplate, Object sqlLiteral, List<?> methodParams) throws Exception {
         Object updateMethod = createFieldAccess(jdbcTemplate, "update");
@@ -249,7 +291,7 @@ public class QueryExecutor {
     }
 
     /**
-     * UPDATE 쿼리 생성 (Named Parameter)
+     * Create UPDATE query (Named Parameter)
      */
     public Object createUpdateQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource) throws Exception {
         Object updateMethod = createFieldAccess(namedJdbcTemplate, "update");
@@ -257,18 +299,16 @@ public class QueryExecutor {
     }
 
     /**
-     * MapSqlParameterSource 생성
+     * Create MapSqlParameterSource
      */
     public Object createParameterSourceCreation(List<?> methodParams) throws Exception {
         Object paramSourceType = createQualifiedIdent("org.springframework.jdbc.core.namedparam.MapSqlParameterSource");
         Object paramSourceExpr = createNewInstance(paramSourceType);
         
-        // 체이닝 방식으로 addValue를 연결: new MapSqlParameterSource().addValue("name", name)...
         Object chained = paramSourceExpr;
         for (Object param : methodParams) {
             String pName = null;
             try {
-                // Try common getters for ParameterInfo
                 try { pName = (String) param.getClass().getMethod("getName").invoke(param); } catch (Exception ignore) {}
                 if (pName == null) { try { pName = (String) param.getClass().getMethod("getParamName").invoke(param); } catch (Exception ignore) {} }
                 if (pName == null) { try { pName = (String) param.getClass().getMethod("getEffectiveName").invoke(param); } catch (Exception ignore) {} }
@@ -284,12 +324,11 @@ public class QueryExecutor {
     }
 
     /**
-     * BeanPropertyRowMapper 생성
+     * Create BeanPropertyRowMapper
      */
     private Object createBeanPropertyRowMapper(String resultTypeClass) throws Exception {
-        Object rowMapperType = createQualifiedIdent("org.springframework.jdbc.core.BeanPropertyRowMapper");
-        Object entityClass = createClassLiteral(resultTypeClass);
-        return createNewClass(rowMapperType, new Object[]{entityClass});
+        return astHelper.getClass().getMethod("createBeanPropertyRowMapper", String.class)
+                .invoke(astHelper, resultTypeClass);
     }
 
     private Object createNewClass(Object type, Object[] args) throws Exception {
@@ -298,14 +337,14 @@ public class QueryExecutor {
     }
 
     /**
-     * ColumnMapRowMapper 생성
+     * Create ColumnMapRowMapper
      */
     private Object createColumnMapRowMapper() throws Exception {
         Object columnMapRowMapperType = createQualifiedIdent("org.springframework.jdbc.core.ColumnMapRowMapper");
         return createNewInstance(columnMapRowMapperType);
     }
 
-    // 헬퍼 메서드들 - ASTHelper에 위임
+    // Helper methods - delegate to ASTHelper
     private Object createLiteral(String value) throws Exception {
         return astHelper.getClass().getMethod("createLiteral", String.class).invoke(astHelper, value);
     }
@@ -327,6 +366,10 @@ public class QueryExecutor {
 
     private Object createReturnStatement(Object expr) throws Exception {
         return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, expr);
+    }
+    
+    private Object createExpressionStatement(Object expr) throws Exception {
+        return astHelper.getClass().getMethod("createExpressionStatement", Object.class).invoke(astHelper, expr);
     }
 
     private Object createVariable(String name, String type) throws Exception {
@@ -353,6 +396,53 @@ public class QueryExecutor {
     private Object createParameterArray(List<?> methodParams) throws Exception {
         return astHelper.getClass().getMethod("createParameterArray", List.class).invoke(astHelper, methodParams);
     }
+    
+    /**
+     * Create single parameter expression from parameter info
+     */
+    private Object createParameterExpression(Object param) throws Exception {
+        String paramName = extractParamName(param);
+        return createIdent(paramName);
+    }
+
+    private String extractParamName(Object param) {
+        if (param == null) return "param";
+        
+        if (param instanceof String) {
+            return param.toString();
+        }
+        
+        try {
+            try { return (String) param.getClass().getMethod("getName").invoke(param); } catch (Exception ignore) {}
+            try { return (String) param.getClass().getMethod("getParamName").invoke(param); } catch (Exception ignore) {}
+            try { return (String) param.getClass().getMethod("getEffectiveName").invoke(param); } catch (Exception ignore) {}
+        } catch (Exception ignore) {}
+        return "param";
+    }
+    
+    private String extractParamType(Object param) {
+        if (param == null) return "Object";
+        try {
+            try { 
+                Object type = param.getClass().getMethod("getType").invoke(param);
+                if (type != null) return type.toString();
+            } catch (Exception ignore) {}
+            try { 
+                Object type = param.getClass().getMethod("getParamType").invoke(param);
+                if (type != null) return type.toString();
+            } catch (Exception ignore) {}
+        } catch (Exception ignore) {}
+        return "Object";
+    }
+    
+    private Object createArrayInitializer(String elementType, List<Object> elements) throws Exception {
+        return astHelper.getClass().getMethod("createArrayInitializer", String.class, List.class)
+                .invoke(astHelper, elementType, elements);
+    }
+    
+    private Object createIdent(String name) throws Exception {
+        return astHelper.getClass().getMethod("createIdent", String.class).invoke(astHelper, name);
+    }
 
     private Object createAddValueStatement(Object param) throws Exception {
         return astHelper.getClass().getMethod("createAddValueStatement", Object.class).invoke(astHelper, param);
@@ -372,96 +462,43 @@ public class QueryExecutor {
                 .invoke(astHelper, resultTypeClass, columnMapping);
     }
 
-    // 유틸리티 메서드들
+    // Utility methods
     private boolean isCollectionParameter(Object param) {
-        // ParameterInfo에서 Collection 타입인지 확인
-        return false; // 임시 구현
-    }
-
-    private boolean isListReturnType(ExecutableElement methodElement) {
-        return methodElement.getReturnType().toString().startsWith("java.util.List");
+        return false;
     }
 
     private boolean isSimpleType(String resultTypeClass) {
         return resultTypeClass.equals("String") || resultTypeClass.equals("Integer") || 
                resultTypeClass.equals("Long") || resultTypeClass.equals("Double") ||
                resultTypeClass.equals("Boolean") || resultTypeClass.equals("BigDecimal") ||
-               resultTypeClass.equals("BigInteger");
+               resultTypeClass.equals("BigInteger") ||
+               resultTypeClass.equals("long") || resultTypeClass.equals("int") ||
+               resultTypeClass.equals("double") || resultTypeClass.equals("boolean") ||
+               resultTypeClass.equals("float") || resultTypeClass.equals("short") ||
+               resultTypeClass.equals("byte");
     }
 
     /**
-     * 타입 캐스팅 표현식 생성
+     * Create type casting expression
      */
     private Object createTypeCastExpression(Object expression, String targetType) throws Exception {
-        // 컴파일러 제네릭 추론 이슈를 방지하기 위해 항상 명시적 캐스팅 시도
+        if (targetType.equals("long") || targetType.equals("int") || targetType.equals("double") || 
+            targetType.equals("boolean") || targetType.equals("float") || targetType.equals("short") || 
+            targetType.equals("byte")) {
+            return expression;
+        }
+        
         try {
-            Object targetTypeExpr = createQualifiedIdent(getFullTypeName(targetType));
+            Object targetTypeExpr = createQualifiedIdent(targetType);
             return astHelper.getClass().getMethod("createTypeCast", Object.class, Object.class)
                     .invoke(astHelper, targetTypeExpr, expression);
         } catch (Exception e) {
-            // createTypeCast 실패시 원본 표현식 반환 (fallback)
             return expression;
         }
     }
 
     /**
-     * Optional 쿼리 생성
-     */
-    private Object createOptionalQuery(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource,
-                                      String resultTypeClass, String returnTypeStr) throws Exception {
-        // Optional<T> 타입에서 T 추출
-        String innerType = extractOptionalInnerType(returnTypeStr);
-        
-        // try-catch로 EmptyResultDataAccessException 처리
-        Object tryBlock = createTryCatchForOptional(namedJdbcTemplate, sqlLiteral, paramSource, innerType);
-        return tryBlock;
-    }
-
-    /**
-     * Optional을 위한 try-catch 블록 생성
-     */
-    private Object createTryCatchForOptional(Object namedJdbcTemplate, Object sqlLiteral, Object paramSource, String innerType) throws Exception {
-        // try {
-        //     T result = namedJdbcTemplate.queryForObject(sql, Type.class, params);
-        //     return Optional.of(result);
-        // } catch (EmptyResultDataAccessException e) {
-        //     return Optional.empty();
-        // }
-        
-        Object queryCall;
-        if (isSimpleType(innerType)) {
-            // Simple types: use SingleColumnRowMapper to avoid generic inference issues
-            Object rowMapperType = createQualifiedIdent("org.springframework.jdbc.core.SingleColumnRowMapper");
-            Object classLiteral = createClassLiteral(getFullTypeName(innerType));
-            Object rowMapper = createNewClass(rowMapperType, new Object[]{classLiteral});
-            // NamedParameterJdbcTemplate.queryForObject(String sql, SqlParameterSource ps, RowMapper<T> rm)
-            queryCall = createMethodCall(createFieldAccess(namedJdbcTemplate, "queryForObject"), 
-                    sqlLiteral, paramSource, rowMapper);
-        } else {
-            Object rowMapper = createBeanPropertyRowMapper(innerType);
-            // NamedParameterJdbcTemplate.queryForObject(String sql, SqlParameterSource ps, RowMapper<T> rm)
-            queryCall = createMethodCall(createFieldAccess(namedJdbcTemplate, "queryForObject"), 
-                    sqlLiteral, paramSource, rowMapper);
-        }
-        
-        // 명시적 캐스팅을 통해 컴파일러 제네릭 추론 이슈 방지
-        queryCall = createTypeCastExpression(queryCall, innerType);
-        
-        // Optional.ofNullable(result) 반환 (간단한 버전)
-        return createOptionalOfNullable(queryCall);
-    }
-
-    /**
-     * Optional.ofNullable() 호출 생성
-     */
-    private Object createOptionalOfNullable(Object value) throws Exception {
-        Object optionalClass = createQualifiedIdent("java.util.Optional");
-        Object ofNullableMethod = createFieldAccess(optionalClass, "ofNullable");
-        return createMethodCall(ofNullableMethod, value);
-    }
-
-    /**
-     * Optional.empty() 호출 생성
+     * Create Optional.empty() call
      */
     private Object createOptionalEmpty() throws Exception {
         Object optionalClass = createQualifiedIdent("java.util.Optional");
@@ -470,21 +507,7 @@ public class QueryExecutor {
     }
 
     /**
-     * Optional<T>에서 T 타입 추출
-     */
-    private String extractOptionalInnerType(String optionalType) {
-        // "java.util.Optional<Long>" -> "Long"
-        int start = optionalType.indexOf('<');
-        int end = optionalType.lastIndexOf('>');
-        if (start > 0 && end > start) {
-            String innerType = optionalType.substring(start + 1, end);
-            return innerType.substring(innerType.lastIndexOf('.') + 1);
-        }
-        return "Object";
-    }
-
-    /**
-     * 단순 타입명을 전체 클래스명으로 변환
+     * Convert simple type name to full class name
      */
     private String getFullTypeName(String simpleType) {
         switch (simpleType) {
@@ -495,7 +518,24 @@ public class QueryExecutor {
             case "Boolean": return "java.lang.Boolean";
             case "BigDecimal": return "java.math.BigDecimal";
             case "BigInteger": return "java.math.BigInteger";
+            case "long": return "java.lang.Long";
+            case "int": return "java.lang.Integer";
+            case "double": return "java.lang.Double";
+            case "boolean": return "java.lang.Boolean";
+            case "float": return "java.lang.Float";
+            case "short": return "java.lang.Short";
+            case "byte": return "java.lang.Byte";
             default: return simpleType;
         }
     }
+
+    /**
+     * Check if type is primitive
+     */
+    private boolean isPrimitive(String type) {
+        return "long".equals(type) || "int".equals(type) || "double".equals(type) || 
+               "boolean".equals(type) || "float".equals(type) || "short".equals(type) || 
+               "byte".equals(type);
+    }
+
 }

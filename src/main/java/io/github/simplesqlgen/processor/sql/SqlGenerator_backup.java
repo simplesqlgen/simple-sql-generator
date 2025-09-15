@@ -50,6 +50,7 @@ public class SqlGenerator {
         
         for (String field : info.getFields()) {
             if (!isValidEntityField(entityInfo, field)) {
+                // Field validation failed - continue with generation
             }
         }
         
@@ -90,6 +91,7 @@ public class SqlGenerator {
         
         for (String field : info.getFields()) {
             if (!isValidEntityField(entityInfo, field)) {
+                // Field validation failed - continue with generation
             }
         }
         
@@ -111,6 +113,7 @@ public class SqlGenerator {
         
         Object sqlLiteral = astHelper.getClass().getMethod("createLiteral", String.class).invoke(astHelper, sql);
         
+        // Create parameter array from method parameters directly
         List<? extends javax.lang.model.element.VariableElement> params = methodElement.getParameters();
         Object updateCall;
         
@@ -131,17 +134,22 @@ public class SqlGenerator {
                     .invoke(astHelper, updateMethod, new Object[]{sqlLiteral, paramArray});
         }
         
+        // Check if method has void return type
         TypeMirror returnType = methodElement.getReturnType();
         String returnTypeStr = returnType.toString();
         boolean isVoid = "void".equals(returnTypeStr) || returnType.getKind().toString().equals("VOID");
         
         if (isVoid) {
+            // For void methods, just execute the update without returning anything
             return astHelper.getClass().getMethod("createExpressionStatement", Object.class).invoke(astHelper, updateCall);
         } else if ("int".equals(returnTypeStr) || "java.lang.Integer".equals(returnTypeStr)) {
+            // For int return, return the update count
             return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, updateCall);
         } else {
+            // For entity return, execute update then return entity parameter (first parameter should be the entity or we construct it)
             List<? extends javax.lang.model.element.VariableElement> methodParams = methodElement.getParameters();
             if (!methodParams.isEmpty()) {
+                // Return first parameter (assuming it's the entity with updated values)
                 Object entityIdent = astHelper.getClass().getMethod("createIdent", String.class)
                         .invoke(astHelper, methodParams.get(0).getSimpleName().toString());
                 
@@ -156,20 +164,26 @@ public class SqlGenerator {
                 
                 return astHelper.getClass().getMethod("createBlock", List.class).invoke(astHelper, statements);
             } else {
+                // Fallback to returning update count
                 return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, updateCall);
             }
         }
     }
     
     private String extractSetField(String methodName) {
+        // Extract the field to update from "updateNameById" -> "name"
+        // Note: "updateBy" methods are handled differently and don't have a set field
         if (methodName.matches("updateBy[A-Z].*")) {
+            // For updateByName -> extract nothing (this is a where-clause-only pattern)
             return "";
         }
         
-        String withoutUpdate = methodName.substring(6);
+        // For updateNameById pattern
+        String withoutUpdate = methodName.substring(6); // Remove "update"
         int byIndex = withoutUpdate.indexOf("By");
         if (byIndex > 0) {
             String fieldPart = withoutUpdate.substring(0, byIndex);
+            // Convert first letter to lowercase
             return Character.toLowerCase(fieldPart.charAt(0)) + fieldPart.substring(1);
         }
         return "";
@@ -209,6 +223,7 @@ public class SqlGenerator {
         
         for (String field : info.getFields()) {
             if (!isValidEntityField(entityInfo, field)) {
+                // Field validation failed - continue with generation
             }
         }
         
@@ -223,8 +238,10 @@ public class SqlGenerator {
                                                             ExecutableElement methodElement, Object astHelper) throws Exception {
         QueryMethodInfo info = parseQueryMethodName(methodName);
         
+        // Validate entity fields (more leniently)
         for (String field : info.getFields()) {
             if (!isValidEntityField(entityInfo, field)) {
+                // Field not found in entity, but proceeding with generation
             }
         }
         
@@ -241,6 +258,7 @@ public class SqlGenerator {
             QueryMethodInfo info = parseQueryMethodName(methodName);
             for (String field : info.getFields()) {
                 if (!isValidEntityField(entityInfo, field)) {
+                    // Field validation failed - continue with generation
                 }
             }
             String sql = "SELECT COUNT(*) FROM " + tableName + generateWhereClause(info);
@@ -453,6 +471,7 @@ public class SqlGenerator {
             
             return false;
         } catch (Exception e) {
+            // Return true by default (for compatibility)
             return true;
         }
     }
@@ -471,6 +490,7 @@ public class SqlGenerator {
         }
     }
 
+    // Generate actual JDBC code
     private Object createQueryImplementation(String sql, ExecutableElement methodElement, String entityFqn, Object astHelper) throws Exception {
         Object jdbcTemplateAccess = astHelper.getClass().getMethod("createFieldAccess", String.class, String.class)
                 .invoke(astHelper, "this", "jdbcTemplate");
@@ -489,16 +509,19 @@ public class SqlGenerator {
                     .invoke(astHelper, getSimpleClassName(entityFqn));
         }
         
+        // Configure method parameters
         List<? extends javax.lang.model.element.VariableElement> params = methodElement.getParameters();
         Object paramArgs = null;
         boolean isSingleParam = false;
         
         if (params != null && !params.isEmpty()) {
             if (params.size() == 1) {
+                // Single parameter: pass directly without Object[] wrapper
                 String name = params.get(0).getSimpleName().toString();
                 paramArgs = astHelper.getClass().getMethod("createIdent", String.class).invoke(astHelper, name);
                 isSingleParam = true;
             } else {
+                // Multiple parameters: use Object[] array
                 List<Object> elements = new ArrayList<>();
                 for (javax.lang.model.element.VariableElement ve : params) {
                     String name = ve.getSimpleName().toString();
@@ -511,8 +534,10 @@ public class SqlGenerator {
             }
         }
         
+        // Select query vs queryForObject based on return type
         Object queryCall;
         if (returnTypeStr.startsWith("java.util.List")) {
+            // List return type - use jdbcTemplate.query()
             Object queryMethod = astHelper.getClass().getMethod("createFieldAccess", Object.class, String.class)
                     .invoke(astHelper, jdbcTemplateAccess, "query");
             if (paramArgs == null) {
@@ -523,6 +548,7 @@ public class SqlGenerator {
                         .invoke(astHelper, queryMethod, new Object[]{sqlLiteral, rowMapper, paramArgs});
             }
         } else {
+            // Single object return type - use jdbcTemplate.queryForObject()
             Object queryForObjectMethod = astHelper.getClass().getMethod("createFieldAccess", Object.class, String.class)
                     .invoke(astHelper, jdbcTemplateAccess, "queryForObject");
             if (paramArgs == null) {
@@ -554,19 +580,22 @@ public class SqlGenerator {
         
         Object sqlLiteral = astHelper.getClass().getMethod("createLiteral", String.class).invoke(astHelper, sql);
         
+        // Check if this is entity-based or individual parameter-based update
         List<? extends javax.lang.model.element.VariableElement> params = methodElement.getParameters();
         Object paramArray = null;
         Object entityIdent = null;
         if (params != null && !params.isEmpty()) {
+            // Check if first parameter is an entity or basic type
             boolean isEntityBasedUpdate = isEntityParameter(params.get(0));
             
             if (isEntityBasedUpdate) {
+                // Entity-based update: extract values from entity using getters
                 String entityParamName = params.get(0).getSimpleName().toString();
                 entityIdent = astHelper.getClass().getMethod("createIdent", String.class).invoke(astHelper, entityParamName);
                 List<Object> elements = new ArrayList<>();
                 boolean isUpdateSql = sql.trim().toUpperCase().startsWith("UPDATE");
                 for (String f : fields) {
-                    if (isUpdateSql && "id".equals(f)) continue;
+                    if (isUpdateSql && "id".equals(f)) continue; // Exclude id from SET in UPDATE
                     String getter = getBooleanAwareGetter(f);
                     Object getterSel = astHelper.getClass().getMethod("createFieldAccess", Object.class, String.class)
                             .invoke(astHelper, entityIdent, getter);
@@ -585,6 +614,7 @@ public class SqlGenerator {
                 paramArray = astHelper.getClass().getMethod("createArrayInitializer", String.class, List.class)
                         .invoke(astHelper, "Object", elements);
             } else {
+                // Individual parameter-based update: use parameters directly
                 List<Object> elements = new ArrayList<>();
                 for (javax.lang.model.element.VariableElement param : params) {
                     String paramName = param.getSimpleName().toString();
@@ -607,10 +637,12 @@ public class SqlGenerator {
         }
         
         if (isSaveMethod && entityIdent != null) {
+            // For save methods, check return type to decide what to return
             TypeMirror returnType = methodElement.getReturnType();
             String returnTypeStr = returnType.toString();
             
             if ("int".equals(returnTypeStr) || "java.lang.Integer".equals(returnTypeStr)) {
+                // User wants int return - return affected row count
                 Object returnStatement = astHelper.getClass().getMethod("createReturnStatement", Object.class)
                         .invoke(astHelper, updateCall);
                 
@@ -619,6 +651,7 @@ public class SqlGenerator {
                 
                 return astHelper.getClass().getMethod("createBlock", List.class).invoke(astHelper, statements);
             } else {
+                // User wants entity return - execute update then return entity
                 Object updateStatement = astHelper.getClass().getMethod("createExpressionStatement", Object.class)
                         .invoke(astHelper, updateCall);
                 Object returnStatement = astHelper.getClass().getMethod("createReturnStatement", Object.class)
@@ -631,12 +664,15 @@ public class SqlGenerator {
                 return astHelper.getClass().getMethod("createBlock", List.class).invoke(astHelper, statements);
             }
         } else {
+            // Check if method has void return type
             TypeMirror returnType = methodElement.getReturnType();
             String returnTypeStr = returnType.toString();
             
             if ("void".equals(returnTypeStr)) {
+                // For void methods, just execute the update without returning anything
                 return astHelper.getClass().getMethod("createExpressionStatement", Object.class).invoke(astHelper, updateCall);
             } else {
+                // For update/delete methods, return the update count
                 return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, updateCall);
             }
         }
@@ -646,6 +682,7 @@ public class SqlGenerator {
         Object jdbcTemplateAccess = astHelper.getClass().getMethod("createFieldAccess", String.class, String.class)
                 .invoke(astHelper, "this", "jdbcTemplate");
         
+        // Access queryForObject method
         Object queryForObjectMethod = astHelper.getClass().getMethod("createFieldAccess", Object.class, String.class)
                 .invoke(astHelper, jdbcTemplateAccess, "queryForObject");
         
@@ -653,13 +690,16 @@ public class SqlGenerator {
         Object longClassLiteral = astHelper.getClass().getMethod("createClassLiteral", String.class)
                 .invoke(astHelper, "java.lang.Long");
         
+        // Configure method parameters
         List<? extends javax.lang.model.element.VariableElement> params = methodElement.getParameters();
         Object paramArgs = null;
         if (params != null && !params.isEmpty()) {
             if (params.size() == 1) {
+                // Single parameter: pass directly
                 String name = params.get(0).getSimpleName().toString();
                 paramArgs = astHelper.getClass().getMethod("createIdent", String.class).invoke(astHelper, name);
             } else {
+                // Multiple parameters: use Object[] array
                 List<Object> elements = new ArrayList<>();
                 for (javax.lang.model.element.VariableElement ve : params) {
                     String name = ve.getSimpleName().toString();
@@ -671,6 +711,7 @@ public class SqlGenerator {
             }
         }
         
+        // Create queryForObject call
         Object queryCall;
         if (paramArgs == null) {
             queryCall = astHelper.getClass().getMethod("createMethodCall", Object.class, Object[].class)
@@ -680,6 +721,7 @@ public class SqlGenerator {
                     .invoke(astHelper, queryForObjectMethod, new Object[]{sqlLiteral, longClassLiteral, paramArgs});
         }
         
+        // Cast Object to Long: (Long) queryCall
         Object longType = astHelper.getClass().getMethod("createQualifiedIdent", String.class)
                 .invoke(astHelper, "Long");
         
@@ -688,6 +730,7 @@ public class SqlGenerator {
                     .invoke(astHelper, longType, queryCall);
             return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, castedCall);
         } catch (Exception e) {
+            // If createTypeCast fails, return Long type directly (simple fallback)
             return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, queryCall);
         }
     }
@@ -700,6 +743,7 @@ public class SqlGenerator {
         
         Object sqlLiteral = astHelper.getClass().getMethod("createLiteral", String.class).invoke(astHelper, sql);
         
+        // Configure method parameters as Object[]
         List<? extends javax.lang.model.element.VariableElement> params = methodElement.getParameters();
         Object paramArray = null;
         if (params != null && !params.isEmpty()) {
@@ -722,13 +766,16 @@ public class SqlGenerator {
                     .invoke(astHelper, updateMethod, new Object[]{sqlLiteral, paramArray});
         }
         
+        // Check if method has void return type
         TypeMirror returnType = methodElement.getReturnType();
         String returnTypeStr = returnType.toString();
         boolean isVoid = "void".equals(returnTypeStr) || returnType.getKind().toString().equals("VOID");
         
         if (isVoid) {
+            // For void methods, just execute the update without returning anything
             return astHelper.getClass().getMethod("createExpressionStatement", Object.class).invoke(astHelper, updateCall);
         } else {
+            // For delete methods, return the update count
             return astHelper.getClass().getMethod("createReturnStatement", Object.class).invoke(astHelper, updateCall);
         }
     }
@@ -743,6 +790,7 @@ public class SqlGenerator {
         Object longClassLiteral = astHelper.getClass().getMethod("createClassLiteral", String.class)
                 .invoke(astHelper, "java.lang.Long");
         
+        // Configure method parameter array
         List<? extends javax.lang.model.element.VariableElement> params = methodElement.getParameters();
         Object paramArray = null;
         if (params != null && !params.isEmpty()) {
@@ -809,23 +857,28 @@ public class SqlGenerator {
     private boolean isEntityParameter(javax.lang.model.element.VariableElement param) {
         String paramType = param.asType().toString();
         
+        // Basic types and wrappers should use parameters directly
         if (isPrimitiveOrWrapper(paramType)) {
             return false;
         }
         
+        // String is not an entity
         if ("java.lang.String".equals(paramType) || "String".equals(paramType)) {
             return false;
         }
         
+        // Collection types are not entities
         if (paramType.startsWith("java.util.List") || paramType.startsWith("java.util.Set") || 
             paramType.startsWith("java.util.Map") || paramType.startsWith("java.util.Collection")) {
             return false;
         }
         
+        // Date/Time types are not entities
         if (paramType.startsWith("java.time.") || paramType.startsWith("java.util.Date")) {
             return false;
         }
         
+        // Assume everything else is an entity
         return true;
     }
     
@@ -851,6 +904,7 @@ public class SqlGenerator {
             return "get" + fieldName;
         }
         
+        // Common boolean field patterns - use "is" prefix
         if ("active".equals(fieldName) || "available".equals(fieldName) || 
             "enabled".equals(fieldName) || "valid".equals(fieldName) ||
             fieldName.startsWith("is") || fieldName.startsWith("has") || fieldName.startsWith("can") ||

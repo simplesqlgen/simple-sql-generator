@@ -24,8 +24,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * SqlProcessor - 완전히 리팩토링된 메인 클래스
- * 분리된 헬퍼 클래스들에 위임하여 단순하고 명확한 구조 제공
+ * SqlProcessor - Main annotation processor class
+ * Delegates to separate helper classes for clean and clear structure
  */
 @AutoService(Processor.class)
 @SupportedAnnotationTypes({
@@ -34,7 +34,7 @@ import java.util.Set;
 @SupportedSourceVersion(SourceVersion.RELEASE_17)
 public class SqlProcessor extends AbstractProcessor {
 
-    // 헬퍼 클래스들
+    // Helper classes
     private ASTHelper astHelper;
     private io.github.simplesqlgen.processor.sql.SqlGenerator sqlGenerator;
     private QueryExecutor queryExecutor;
@@ -51,10 +51,9 @@ public class SqlProcessor extends AbstractProcessor {
 
         try {
             initializeHelpers(processingEnv);
-            logInfo("✅ SqlProcessor 초기화 완료");
         } catch (Exception e) {
-            logError("❌ 초기화 실패: " + e.getMessage());
-            throw new RuntimeException("SqlProcessor 초기화 실패", e);
+            logError("Initialization failed: " + e.getMessage());
+            throw new RuntimeException("SqlProcessor initialization failed", e);
         }
     }
 
@@ -62,16 +61,16 @@ public class SqlProcessor extends AbstractProcessor {
         try {
             astHelper = new ASTHelper();
             astHelper.initialize(processingEnv);
-            
+
             if (!astHelper.isASTAvailable()) {
-                throw new IllegalStateException("AST 기반 처리를 사용할 수 없습니다");
+                throw new IllegalStateException("AST-based processing is not available");
             }
-            
+
             sqlGenerator = new io.github.simplesqlgen.processor.sql.SqlGenerator();
             queryExecutor = new QueryExecutor(astHelper);
             parameterProcessor = new ParameterProcessor(astHelper);
         } catch (Exception e) {
-            throw new RuntimeException("Helper 초기화 실패", e);
+            throw new RuntimeException("Helper initialization failed", e);
         }
     }
 
@@ -85,7 +84,7 @@ public class SqlProcessor extends AbstractProcessor {
             processAnnotatedClasses(roundEnv);
             return true;
         } catch (Exception e) {
-            logError("❌ 처리 중 오류 발생: " + e.getMessage());
+            logError("Processing error occurred: " + e.getMessage());
             return false;
         }
     }
@@ -102,15 +101,14 @@ public class SqlProcessor extends AbstractProcessor {
     private void processSqlGeneratorClass(TypeElement classElement) {
         try {
             ClassProcessingContext context = createProcessingContext(classElement);
-            logInfo("🔄 처리 중: " + context.getClassName() + " (엔티티: " + context.getEntityName() + ", 테이블: " + context.getTableName() + ")");
-            // 네이밍 전략을 SQL 생성기에 적용
+
             try { sqlGenerator.setNamingStrategy(context.getNamingStrategy()); } catch (Exception ignore) { }
-            
+
             validateEntityInfo(context);
             processClassWithAST(context);
-            
+
         } catch (Exception e) {
-            logError("SqlGenerator 클래스 처리 실패: " + e.getMessage());
+            logError("SqlGenerator class processing failed: " + e.getMessage());
             if (AST_DEBUG) {
                 java.io.StringWriter sw = new java.io.StringWriter();
                 java.io.PrintWriter pw = new java.io.PrintWriter(sw);
@@ -128,7 +126,6 @@ public class SqlProcessor extends AbstractProcessor {
             nativeOnly = annotation.nativeQueryOnly();
         } catch (Exception ignore) { }
 
-        // entity()가 void 이면 엔티티 없는(nativeOnly) 모드로 처리
         if (!nativeOnly) {
             nativeOnly = isVoidEntity(annotation);
         }
@@ -150,35 +147,23 @@ public class SqlProcessor extends AbstractProcessor {
 
     private void validateEntityInfo(ClassProcessingContext context) {
         if (context.isNativeQueryOnly()) {
-            // NativeQuery 전용 모드에서는 엔티티 검증을 건너뜀
             return;
         }
         if (context.getEntityInfo().getFields().isEmpty()) {
-            throw new IllegalStateException("엔티티 필드 분석 실패 또는 필드가 없음: " + context.getEntityName());
+            throw new IllegalStateException("Entity field analysis failed or no fields found: " + context.getEntityName());
         }
     }
 
     private void processClassWithAST(ClassProcessingContext context) throws Exception {
         Object treePath = astHelper.getTreePath(context.getClassElement());
         if (treePath == null) {
-            throw new IllegalStateException("TreePath를 가져올 수 없습니다: " + context.getClassName());
+            throw new IllegalStateException("Cannot get TreePath: " + context.getClassName());
         }
 
-        Object compilationUnit = astHelper.getCompilationUnit(treePath);
         Object classDecl = astHelper.getClassDecl(treePath);
 
-        // 필요한 import 추가는 불안정성이 있어 일단 생략 (기존 코드의 import를 사용)
-        try {
-            // astHelper.addRequiredImports(compilationUnit);
-        } catch (Exception ignore) { }
-        
-        // 의존성 주입 필드가 이미 있는지 확인 후 필요시에만 추가
         astHelper.injectAutowiredFields(classDecl);
-        
-        // 그 다음에 메서드 변환을 수행
-        int transformedCount = transformClassMethods(classDecl, context);
-        
-        logInfo("✅ AST 조작 완료: " + transformedCount + "개 메서드 변환, @Autowired 필드 추가 완료");
+        transformClassMethods(classDecl, context);
     }
 
     private int transformClassMethods(Object classDecl, ClassProcessingContext context) throws Exception {
@@ -186,23 +171,23 @@ public class SqlProcessor extends AbstractProcessor {
             java.lang.reflect.Field defsField = classDecl.getClass().getDeclaredField("defs");
             defsField.setAccessible(true);
             Object membersList = defsField.get(classDecl);
-            
+
             TransformResult result = createTransformedMembersList(membersList, context);
             defsField.set(classDecl, result.newList);
-            
+
             return result.transformedCount;
         } catch (Exception e) {
             try {
                 Object membersList = classDecl.getClass().getDeclaredMethod("getMembers").invoke(classDecl);
                 TransformResult result = createTransformedMembersList(membersList, context);
-                
-                java.lang.reflect.Method setMembersMethod = classDecl.getClass().getDeclaredMethod("setMembers", 
+
+                java.lang.reflect.Method setMembersMethod = classDecl.getClass().getDeclaredMethod("setMembers",
                         Class.forName("com.sun.tools.javac.util.List"));
                 setMembersMethod.invoke(classDecl, result.newList);
-                
+
                 return result.transformedCount;
             } catch (Exception ex) {
-                logError("멤버 변환 실패: " + ex.getMessage());
+                logError("Member transformation failed: " + ex.getMessage());
                 if (AST_DEBUG) {
                     java.io.StringWriter sw = new java.io.StringWriter();
                     java.io.PrintWriter pw = new java.io.PrintWriter(sw);
@@ -217,7 +202,7 @@ public class SqlProcessor extends AbstractProcessor {
     private TransformResult createTransformedMembersList(Object originalList, ClassProcessingContext context) throws Exception {
         List<Object> newMembers = new ArrayList<>();
         int transformedCount = 0;
-        
+
         if (originalList instanceof Iterable) {
             for (Object member : (Iterable<?>) originalList) {
                 if (isMethodDeclaration(member)) {
@@ -231,7 +216,7 @@ public class SqlProcessor extends AbstractProcessor {
                 }
             }
         }
-        
+
         return new TransformResult(convertToJavacList(newMembers), transformedCount);
     }
 
@@ -239,15 +224,14 @@ public class SqlProcessor extends AbstractProcessor {
         String methodName = "unknown";
         try {
             methodName = getMethodName(member);
-            debug("메서드 멤버 처리: " + methodName);
+            debug("Processing method member: " + methodName);
 
             ExecutableElement methodElement = findMethodElement(context.getClassElement(), methodName);
-            debug("methodElement 찾기: " + (methodElement != null ? "찾음" : "못 찾음") + " (" + methodName + ")");
+            debug("Finding methodElement: " + (methodElement != null ? "found" : "not found") + " (" + methodName + ")");
 
             boolean isEmpty = isEmptyMethod(member);
-            debug("빈 메서드 여부: " + isEmpty + " (" + methodName + ")");
+            debug("Empty method check: " + isEmpty + " (" + methodName + ")");
 
-            // @NativeQuery 또는 생성 대상 네이밍 메서드는 본문이 비어있지 않아도 강제 변환
             boolean shouldForceTransform = false;
             try {
                 NativeQuery nq = methodElement != null ? methodElement.getAnnotation(NativeQuery.class) : null;
@@ -256,28 +240,25 @@ public class SqlProcessor extends AbstractProcessor {
                         || methodName.startsWith("existsBy") || methodName.startsWith("save")
                         || methodName.startsWith("update");
                 boolean isOptionalReturn = methodElement != null && methodElement.getReturnType().toString().startsWith("java.util.Optional");
-                // Optional 반환은 현재 변환에서 제외 (제네릭 추론 문제 회피)
                 shouldForceTransform = !isOptionalReturn && ((nq != null) || isGeneratedName);
-                debug("강제 변환 대상 여부: " + shouldForceTransform + " (" + methodName + ")");
+                debug("Force transform check: " + shouldForceTransform + " (" + methodName + ")");
             } catch (Exception ignore) { }
 
             if (methodElement != null && (isEmpty || shouldForceTransform)) {
-                debug("메서드 변환 시작: " + methodName);
+                debug("Starting method transformation: " + methodName);
 
                 Object result = createImplementedMethod(member, methodName, methodElement, context);
 
-                // 동일 객체라도 본문이 변경되었으면 성공으로 처리
                 boolean isTransformed = checkMethodBodyChanged(member, methodName);
-                debug("본문 변경 여부: " + isTransformed);
+                debug("Body changed check: " + isTransformed);
 
                 return result;
             }
 
             return member;
         } catch (Exception e) {
-            logError("메서드 멤버 처리 실패: " + methodName + " - " + e.getMessage());
+            logError("Method member processing failed: " + methodName + " - " + e.getMessage());
             if (AST_DEBUG) {
-                // Provide stack trace only in debug mode
                 java.io.StringWriter sw = new java.io.StringWriter();
                 java.io.PrintWriter pw = new java.io.PrintWriter(sw);
                 e.printStackTrace(pw);
@@ -286,7 +267,7 @@ public class SqlProcessor extends AbstractProcessor {
             return member;
         }
     }
-    
+
     private boolean checkMethodBodyChanged(Object methodDecl, String methodName) {
         try {
             Object body = methodDecl.getClass().getDeclaredMethod("getBody").invoke(methodDecl);
@@ -301,13 +282,13 @@ public class SqlProcessor extends AbstractProcessor {
                 }
                 if (stmtList.size() == 1) {
                     Object stmt = stmtList.get(0);
-                    // return null이 아닌 다른 문장이면 변경된 것
+
                     return !isReturnNullStatement(stmt);
                 }
             }
             return false;
         } catch (Exception e) {
-            if (AST_DEBUG) debug("본문 변경 확인 실패: " + methodName + " - " + e.getMessage());
+            if (AST_DEBUG) debug("Body change check failed: " + methodName + " - " + e.getMessage());
             return false;
         }
     }
@@ -318,51 +299,50 @@ public class SqlProcessor extends AbstractProcessor {
         return fromMethod.invoke(null, new Object[]{members.toArray()});
     }
 
-    private Object createImplementedMethod(Object originalMethod, String methodName, 
+    private Object createImplementedMethod(Object originalMethod, String methodName,
                                           ExecutableElement methodElement, ClassProcessingContext context) throws Exception {
         try {
             NativeQuery nativeQuery = methodElement.getAnnotation(NativeQuery.class);
             if (nativeQuery != null) {
-                logInfo("NativeQuery 처리: " + methodName);
+    
                 return processNativeQueryMethod(nativeQuery, methodElement, originalMethod);
             }
-            // NativeQuery 전용 모드에서는 엔티티 기반 자동 생성 메서드를 처리하지 않음
             if (context.isNativeQueryOnly()) {
-                logInfo("NativeQuery-only 모드: 생성 메서드 무시 - " + methodName);
+    
                 return originalMethod;
             }
-            logInfo("Generated SQL 처리: " + methodName);
+
             Object result = processGeneratedSqlMethod(methodName, methodElement, originalMethod, context);
             if (result == null) {
-                logError("메서드 구현 결과가 null: " + methodName);
-                return originalMethod; // null인 경우 원본 메서드 반환
+                logError("Method implementation result is null: " + methodName);
+                return originalMethod;
             }
             return result;
         } catch (Exception e) {
-            logError("메서드 구현 처리 실패: " + methodName + " - " + e.getMessage());
+            logError("Method implementation processing failed: " + methodName + " - " + e.getMessage());
             if (AST_DEBUG) {
                 java.io.StringWriter sw = new java.io.StringWriter();
                 java.io.PrintWriter pw = new java.io.PrintWriter(sw);
                 e.printStackTrace(pw);
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, sw.toString());
             }
-            return originalMethod; // 실패 시 원본 메서드 반환
+            return originalMethod;
         }
     }
 
-    private Object processNativeQueryMethod(NativeQuery nativeQuery, ExecutableElement methodElement, 
+    private Object processNativeQueryMethod(NativeQuery nativeQuery, ExecutableElement methodElement,
                                            Object originalMethod) throws Exception {
         String sql = nativeQuery.value();
         List<ParameterInfo> methodParams = parameterProcessor.analyzeMethodParameters(methodElement);
-        
+
         Object queryExecution = createQueryExecution(sql, nativeQuery, methodElement, methodParams);
         return replaceMethodBody(originalMethod, queryExecution);
     }
 
-    private Object createQueryExecution(String sql, NativeQuery nativeQuery, ExecutableElement methodElement, 
+    private Object createQueryExecution(String sql, NativeQuery nativeQuery, ExecutableElement methodElement,
                                        List<ParameterInfo> methodParams) throws Exception {
         boolean isUpdate = isUpdateQuery(sql);
-        
+
         if (hasNamedParameters(sql)) {
             return createNamedParameterExecution(sql, nativeQuery, methodElement, methodParams, isUpdate);
         } else {
@@ -376,62 +356,70 @@ public class SqlProcessor extends AbstractProcessor {
         try {
             parameterProcessor.validateParameterMapping(namedParams, methodParams, methodElement.getSimpleName().toString());
         } catch (RuntimeException ex) {
-            logInfo("⚠️ Named parameter validation skipped: " + ex.getMessage());
+            // Parameter validation failed - continue with generation
         }
-        
-        String resultTypeName = getResultTypeName(nativeQuery);
+
+        String resultTypeName = getResultTypeName(nativeQuery, methodElement);
         String columnMappingStr = String.join(",", nativeQuery.columnMapping());
+        boolean isVoid = "void".equals(methodElement.getReturnType().toString());
         return queryExecutor.createNamedParameterQueryExecution(sql, methodElement, isUpdate,
-                nativeQuery.mappingType(), resultTypeName, 
-                columnMappingStr, methodParams);
+                nativeQuery.mappingType(), resultTypeName,
+                columnMappingStr, methodParams, isVoid);
     }
 
     private Object createPositionalParameterExecution(String sql, NativeQuery nativeQuery, ExecutableElement methodElement,
                                                      List<ParameterInfo> methodParams, boolean isUpdate) throws Exception {
         int placeholderCount = parameterProcessor.countPositionalParameters(sql);
         try {
-            parameterProcessor.validatePositionalParameters(placeholderCount, methodParams, 
+            parameterProcessor.validatePositionalParameters(placeholderCount, methodParams,
                 methodElement.getSimpleName().toString());
         } catch (RuntimeException ex) {
-            logInfo("⚠️ Positional parameter validation skipped: " + ex.getMessage());
+            // Parameter validation failed - continue with generation
         }
-        
-        String resultTypeName = getResultTypeName(nativeQuery);
+
+        String resultTypeName = getResultTypeName(nativeQuery, methodElement);
         String columnMappingStr = String.join(",", nativeQuery.columnMapping());
+        boolean isVoid = "void".equals(methodElement.getReturnType().toString());
         return queryExecutor.createPositionalParameterQueryExecution(sql, methodElement, isUpdate,
-                nativeQuery.mappingType(), resultTypeName, 
-                columnMappingStr, methodParams);
+                nativeQuery.mappingType(), resultTypeName,
+                columnMappingStr, methodParams, isVoid);
     }
 
-    private String getResultTypeName(NativeQuery nativeQuery) {
+    private String getResultTypeName(NativeQuery nativeQuery, ExecutableElement methodElement) {
         try {
             Class<?> resultType = nativeQuery.resultType();
-            return resultType.getSimpleName();
-        } catch (MirroredTypeException mte) {
-            String typeName = mte.getTypeMirror().toString();
-            int lastDot = typeName.lastIndexOf('.');
-            return lastDot >= 0 ? typeName.substring(lastDot + 1) : typeName;
-        } catch (Exception e) {
+            if (resultType != Object.class) {
+                return resultType.getSimpleName();
+            }
+
+            if (methodElement != null) {
+                return methodElement.getReturnType().toString();
+            }
+
             return "Object";
+
+        } catch (MirroredTypeException mte) {
+            TypeMirror typeMirror = mte.getTypeMirror();
+            String fullName = typeMirror.toString();
+
+            if ("java.lang.Object".equals(fullName) && methodElement != null) {
+                return methodElement.getReturnType().toString();
+            }
+
+            return fullName;
         }
     }
 
     private Object processGeneratedSqlMethod(String methodName, ExecutableElement methodElement, 
                                             Object originalMethod, ClassProcessingContext context) throws Exception {
         
-        System.out.println("🔍 processGeneratedSqlMethod 시작: " + methodName);
-        
         Object methodBody = generateMethodBody(methodName, methodElement, context);
-        System.out.println("🔍 generateMethodBody 결과: " + (methodBody == null ? "null" : methodBody.getClass().getSimpleName()));
         
         if (methodBody == null) {
-            System.out.println("❌ generateMethodBody가 null 반환: " + methodName);
             return originalMethod;
         }
         
-        // 안전장치: 반환 타입이 void가 아닌데 반환문이 아니면 기본 반환 생성
         if (!isReturnStatement(methodBody) && !isVoidReturnType(methodElement)) {
-            System.out.println("⚠️ 반환문이 아님 - 기본 반환문으로 대체: " + methodName);
             Object defaultReturn = createDefaultReturnFor(methodElement);
             if (defaultReturn != null) {
                 methodBody = defaultReturn;
@@ -439,7 +427,6 @@ public class SqlProcessor extends AbstractProcessor {
         }
         
         Object result = replaceMethodBody(originalMethod, methodBody);
-        System.out.println("🔍 replaceMethodBody 결과: " + (result != originalMethod ? "변환됨" : "동일"));
         
         return result;
     }
@@ -475,11 +462,11 @@ public class SqlProcessor extends AbstractProcessor {
         }
     }
 
-    // 유틸리티 메서드들
+    // Utility methods
     private TypeMirror getEntityType(SqlGenerator annotation) {
         try {
             annotation.entity();
-            return null; // 이 줄은 실행되지 않음
+            return null; // This line is never executed
         } catch (MirroredTypeException mte) {
             return mte.getTypeMirror();
         }
@@ -516,7 +503,7 @@ public class SqlProcessor extends AbstractProcessor {
     }
 
     private String applyNamingStrategy(String baseName, NamingStrategy strategy) {
-        // baseName here is an entity simple name (usually PascalCase)
+
         switch (strategy) {
             case CAMEL_CASE:
                 return pascalToCamel(baseName);
@@ -547,7 +534,7 @@ public class SqlProcessor extends AbstractProcessor {
                 entityInfo.setFields(fields);
             }
         } catch (Exception e) {
-            logError("❌ 엔티티 분석 실패: " + e.getMessage());
+            logError("Entity analysis failed: " + e.getMessage());
         }
         return entityInfo;
     }
@@ -578,7 +565,7 @@ public class SqlProcessor extends AbstractProcessor {
                 if (stmtList.isEmpty()) {
                     return true;
                 }
-                // 단일 return null; 문장만 있는 경우도 빈 메서드로 처리
+
                 if (stmtList.size() == 1) {
                     Object stmt = stmtList.get(0);
                     if (isReturnNullStatement(stmt)) {
@@ -589,7 +576,7 @@ public class SqlProcessor extends AbstractProcessor {
             }
             return true;
         } catch (Exception e) {
-            if (AST_DEBUG) debug("메서드 확인 실패: " + e.getMessage());
+            if (AST_DEBUG) debug("Method check failed: " + e.getMessage());
             return false;
         }
     }
@@ -610,7 +597,7 @@ public class SqlProcessor extends AbstractProcessor {
             }
             return false;
         } catch (Exception e) {
-            if (AST_DEBUG) debug("return null 확인 실패: " + e.getMessage());
+            if (AST_DEBUG) debug("Return null check failed: " + e.getMessage());
             return false;
         }
     }
@@ -622,22 +609,20 @@ public class SqlProcessor extends AbstractProcessor {
 
     private Object replaceMethodBody(Object originalMethod, Object newStatement) throws Exception {
         try {
-            // 새로운 문장을 블록으로 감싸기
             Object newBlock = astHelper.createBlockFromStatement(newStatement);
-            // 원본 메서드의 body 필드 수정
+            // Modify the body field of the original method
             java.lang.reflect.Field bodyField = originalMethod.getClass().getDeclaredField("body");
             bodyField.setAccessible(true);
             bodyField.set(originalMethod, newBlock);
             return originalMethod;
         } catch (Exception e) {
             try {
-                // 이미 JCBlock인 경우 직접 할당
                 java.lang.reflect.Field bodyField = originalMethod.getClass().getDeclaredField("body");
                 bodyField.setAccessible(true);
                 bodyField.set(originalMethod, newStatement);
                 return originalMethod;
             } catch (Exception ex) {
-                logError("메서드 본문 교체 실패: " + ex.getMessage());
+                logError("Method body replacement failed: " + ex.getMessage());
                 return originalMethod;
             }
         }
@@ -646,12 +631,12 @@ public class SqlProcessor extends AbstractProcessor {
     private Object createDebugStatement(String methodName) throws Exception {
         Object systemOut = astHelper.createQualifiedIdent("System.out");
         Object printlnAccess = astHelper.createFieldAccess(systemOut, "println");
-        Object messageLiteral = astHelper.createLiteral("🔧 " + methodName + " 메서드가 호출됨 (구현 필요)");
+        Object messageLiteral = astHelper.createLiteral("Method " + methodName + " called (implementation needed)");
         Object printCall = astHelper.createMethodCall(printlnAccess, messageLiteral);
         return astHelper.createExpressionStatement(printCall);
     }
 
-    // 안전장치 유틸리티
+    // Safety utility methods
     private boolean isReturnStatement(Object stmt) {
         return stmt != null && "JCReturn".equals(stmt.getClass().getSimpleName());
     }
@@ -698,13 +683,13 @@ public class SqlProcessor extends AbstractProcessor {
                 Object call = astHelper.createMethodCall(empty);
                 return astHelper.createReturnStatement(call);
             }
-            // 기타 객체 타입은 null 반환
+
             try {
                 java.lang.reflect.Method m = astHelper.getClass().getMethod("createLiteral", Object.class);
                 Object nullLit = m.invoke(astHelper, new Object[]{null});
                 return astHelper.createReturnStatement(nullLit);
             } catch (Exception ex) {
-                // 최후 수단: return; (컴파일 오류 방지용으로 사용하지 않음)
+
                 return null;
             }
         } catch (Exception e) {
@@ -721,7 +706,7 @@ public class SqlProcessor extends AbstractProcessor {
         return sql.contains(":");
     }
 
-    // 로깅 메서드들
+    // Logging methods
     private void logInfo(String message) {
         if (AST_VERBOSE) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, message);
@@ -729,7 +714,7 @@ public class SqlProcessor extends AbstractProcessor {
     }
 
     private void logError(String message) {
-        // Emit as WARNING to highlight important issues without failing compilation
+
         processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, message);
     }
 
@@ -739,7 +724,7 @@ public class SqlProcessor extends AbstractProcessor {
         }
     }
 
-    // 내부 클래스들
+    // Inner classes
     public static class EntityInfo {
         private List<String> fields = new ArrayList<>();
 

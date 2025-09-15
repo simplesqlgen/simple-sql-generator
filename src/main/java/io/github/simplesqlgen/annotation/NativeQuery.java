@@ -11,7 +11,7 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.SOURCE)
 public @interface NativeQuery {
-    String value(); // SQL 쿼리
+    String value();
 
     Class<?> resultType() default Object.class;
     ResultMappingType mappingType() default ResultMappingType.AUTO;

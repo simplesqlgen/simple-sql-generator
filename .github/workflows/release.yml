@@ -39,22 +39,12 @@ jobs:
       id: extract_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       
-    - name: Update version in build.gradle
-      run: |
-        sed -i "s/version = '[^']*'/version = '${{ steps.extract_version.outputs.VERSION }}'/" build.gradle
-        
-    - name: Create GPG key file
-      run: |
-        echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode > private.key
-        
     - name: Build and publish
       env:
+        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
-        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-        SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
       run: |
-        ./gradlew clean build publishToMavenLocal
+        ./gradlew clean test build publishAllPublicationsToMavenLocalRepository --no-daemon
         
     - name: Create release bundle
       run: |
@@ -141,5 +131,3 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-    - name: Clean up
-      run: rm -f private.key

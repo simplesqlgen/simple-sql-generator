@@ -12,8 +12,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 파라미터 처리를 담당하는 클래스
- * 메서드 파라미터 분석, 검증, 코드 생성 등을 처리
+ * Parameter processing handler
+ * Analyzes method parameters, validates mappings, and generates parameter code
  */
 public class ParameterProcessor {
     
@@ -24,7 +24,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * 메서드 파라미터 분석
+     * Analyze method parameters
      */
     public List<ParameterInfo> analyzeMethodParameters(ExecutableElement methodElement) {
         List<ParameterInfo> paramInfos = new ArrayList<>();
@@ -35,7 +35,6 @@ public class ParameterProcessor {
             info.setType(param.asType());
             info.setTypeString(param.asType().toString());
             
-            // @Param 어노테이션 확인
             Param paramAnnotation = param.getAnnotation(Param.class);
             if (paramAnnotation != null) {
                 info.setParamName(paramAnnotation.value());
@@ -44,8 +43,7 @@ public class ParameterProcessor {
                 info.setParamName(info.getName());
                 info.setParameterType(ParameterType.POSITIONAL);
             }
-            
-            // Collection 타입 확인
+
             String typeStr = info.getTypeString();
             if (typeStr.startsWith("java.util.List") || typeStr.startsWith("java.util.Collection") || 
                 typeStr.startsWith("java.util.Set") || typeStr.endsWith("[]")) {
@@ -59,7 +57,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * Named Parameter 매핑 검증
+     * Validate Named Parameter mapping
      */
     public void validateParameterMapping(List<String> namedParams, List<ParameterInfo> methodParams, String methodName) {
         List<String> paramNames = new ArrayList<>();
@@ -75,7 +73,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * Positional Parameter 검증
+     * Validate Positional Parameters
      */
     public void validatePositionalParameters(int placeholderCount, List<ParameterInfo> methodParams, String methodName) {
         if (placeholderCount != methodParams.size()) {
@@ -85,7 +83,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * SQL에서 Named Parameter 추출
+     * Extract Named Parameters from SQL
      */
     public List<String> extractNamedParameters(String sql) {
         List<String> namedParams = new ArrayList<>();
@@ -103,7 +101,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * SQL에서 Positional Parameter 개수 계산
+     * Count Positional Parameters in SQL
      */
     public int countPositionalParameters(String sql) {
         int count = 0;
@@ -116,20 +114,19 @@ public class ParameterProcessor {
     }
 
     /**
-     * MapSqlParameterSource 생성 코드
+     * Create MapSqlParameterSource code
      */
     public Object createParameterSourceCreation(List<ParameterInfo> methodParams) throws Exception {
         Object paramSourceType = createQualifiedIdent("org.springframework.jdbc.core.namedparam.MapSqlParameterSource");
         Object paramSourceExpr = createNewInstance(paramSourceType);
         
-        // 변수 선언
         Object paramSourceVar = createVariable("paramSource", paramSourceType);
         Object assignment = createAssignment(paramSourceVar, paramSourceExpr);
         
         List<Object> statements = new ArrayList<>();
         statements.add(assignment);
         
-        // 각 파라미터에 대한 addValue 호출 추가
+
         for (ParameterInfo paramInfo : methodParams) {
             Object addValueStatement = createAddValueStatement(paramInfo);
             statements.add(addValueStatement);
@@ -139,7 +136,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * addValue 문장 생성
+     * Create addValue statement
      */
     public Object createAddValueStatement(ParameterInfo paramInfo) throws Exception {
         Object paramNameLiteral = createLiteral(paramInfo.getParamName());
@@ -147,7 +144,7 @@ public class ParameterProcessor {
         
         Object addValueCall;
         if (paramInfo.isCollection()) {
-            // Collection 타입인 경우 toArray() 호출
+
             Object toArrayCall = createMethodCall(createFieldAccess(paramValueVar, "toArray"));
             addValueCall = createMethodCall(
                 createFieldAccess("paramSource", "addValue"),
@@ -166,18 +163,17 @@ public class ParameterProcessor {
     }
 
     /**
-     * 동적 SQL 처리 (Collection 파라미터용)
+     * Dynamic SQL processing for Collection parameters
      */
     public Object createDynamicSqlProcessing(String sql, List<ParameterInfo> methodParams) throws Exception {
         List<Object> statements = new ArrayList<>();
         
-        // StringBuilder 초기화
         Object sqlBuilderVar = createVariable("sqlBuilder", "StringBuilder");
         Object sqlBuilderInit = createNewStringBuilder(sql);
         Object sqlBuilderAssignment = createAssignment(sqlBuilderVar, sqlBuilderInit);
         statements.add(sqlBuilderAssignment);
         
-        // Collection 파라미터들 처리
+
         for (int i = 0; i < methodParams.size(); i++) {
             ParameterInfo param = methodParams.get(i);
             if (param.isCollection()) {
@@ -186,7 +182,6 @@ public class ParameterProcessor {
             }
         }
         
-        // SQL 문자열 반환
         Object sqlVar = createVariable("sql", "String");
         Object sqlAssignment = createAssignment(sqlVar, 
             createMethodCall(createFieldAccess(sqlBuilderVar, "toString")));
@@ -196,27 +191,23 @@ public class ParameterProcessor {
     }
 
     /**
-     * IN 절 처리 생성
+     * Create IN clause processing
      */
     public Object createInClauseProcessing(ParameterInfo param, int paramIndex) throws Exception {
         List<Object> statements = new ArrayList<>();
         
         Object paramVar = createVariable(param.getName());
         
-        // if (!param.isEmpty()) 조건
         Object isEmptyCheck = createMethodCall(createFieldAccess(paramVar, "isEmpty"));
         Object notEmptyCondition = createUnaryExpression("!", isEmptyCheck);
         
-        // placeholders StringBuilder 생성
         Object placeholdersVar = createVariable("placeholders", "StringBuilder");
         Object placeholdersInit = createNewStringBuilder("");
         statements.add(createAssignment(placeholdersVar, placeholdersInit));
         
-        // for 루프 생성
         Object forLoop = createForLoop(param, createPlaceholderGeneration(param));
         statements.add(forLoop);
         
-        // SQL 치환
         String placeholder = "\\?" + (paramIndex > 0 ? "{" + paramIndex + "}" : "");
         Object replaceCall = createMethodCall(
             createFieldAccess("sqlBuilder", "toString"),
@@ -240,12 +231,11 @@ public class ParameterProcessor {
     }
 
     /**
-     * Placeholder 생성 루프 바디
+     * Placeholder generation loop body
      */
     public Object createPlaceholderGeneration(ParameterInfo param) throws Exception {
         List<Object> statements = new ArrayList<>();
         
-        // if (i > 0) placeholders.append(", ");
         Object iVar = createVariable("i");
         Object condition = createBinaryExpression(iVar, ">", createLiteral(0));
         Object commaAppend = createMethodCall(
@@ -255,7 +245,6 @@ public class ParameterProcessor {
         Object commaIf = createIfStatement(condition, createExpressionStatement(commaAppend));
         statements.add(commaIf);
         
-        // placeholders.append("?");
         Object questionAppend = createMethodCall(
             createFieldAccess("placeholders", "append"),
             createLiteral("?")
@@ -266,7 +255,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * For 루프 생성
+     * Create For loop
      */
     public Object createForLoop(ParameterInfo param, Object body) throws Exception {
         Object paramVar = createVariable(param.getName());
@@ -281,7 +270,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * 파라미터 배열 생성
+     * Create parameter array
      */
     public Object createParameterArray(List<ParameterInfo> methodParams) throws Exception {
         List<Object> elements = new ArrayList<>();
@@ -298,7 +287,7 @@ public class ParameterProcessor {
         return createArrayInitializer("Object", elements);
     }
 
-    // AST Helper 메서드들에 위임하는 헬퍼 메서드들
+
     private Object createQualifiedIdent(String qualifiedName) throws Exception {
         return astHelper.getClass().getMethod("createQualifiedIdent", String.class).invoke(astHelper, qualifiedName);
     }
@@ -368,7 +357,7 @@ public class ParameterProcessor {
     }
 
     /**
-     * 파라미터 정보를 담는 클래스
+     * Parameter information holder
      */
     public static class ParameterInfo {
         private String name;
