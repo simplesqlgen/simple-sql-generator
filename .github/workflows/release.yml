@@ -11,123 +11,78 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        
-    - name: Cache Gradle packages
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Extract version from tag
+        id: extract_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build, test, and publish locally with signing
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}  # optional, 비밀번호 있는 경우
+        run: |
+          echo "Importing PGP key..."
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          ./gradlew clean test build publishToMavenLocal -Psigning.keyId=$SIGNING_KEY_ID -Psigning.password=$SIGNING_PASSWORD -Psigning.secretKeyRingFile=~/.gnupg/secring.gpg --no-daemon
+
+      - name: Create release bundle
+        run: |
+          VERSION=${{ steps.extract_version.outputs.VERSION }}
+          MAVEN_DIR=~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/$VERSION
           
-    - name: Make gradlew executable
-      run: chmod +x gradlew
-      
-    - name: Extract version from tag
-      id: extract_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
-    - name: Build and publish
-      env:
-        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
-      run: |
-        ./gradlew clean test build publishToMavenLocal --no-daemon
-        
-    - name: Create release bundle
-      run: |
-        VERSION=${{ steps.extract_version.outputs.VERSION }}
-        MAVEN_DIR=~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/$VERSION
-        
-        echo "🔍 Looking for Maven directory: $MAVEN_DIR"
-        
-        # Check if directory exists
-        if [ ! -d "$MAVEN_DIR" ]; then
-          echo "❌ Maven directory not found: $MAVEN_DIR"
-          echo "🔍 Searching for simple-sql-generator directories:"
-          find ~/.m2 -name "*simple-sql-generator*" -type d 2>/dev/null | head -10
-          echo "🔍 Contents of ~/.m2/repository:"
-          find ~/.m2/repository -maxdepth 3 -type d 2>/dev/null | head -20
-          exit 1
-        fi
-        
-        cd "$MAVEN_DIR"
-        echo "📁 Working in: $(pwd)"
-        echo "📄 Files found:"
-        ls -la
-        
-        # Generate checksums for existing files
-        for file in *.jar *.pom *.module; do
-          if [ -f "$file" ]; then
-            echo "🔐 Generating checksums for $file"
-            md5sum "$file" | cut -d' ' -f1 > "$file.md5"
-            sha1sum "$file" | cut -d' ' -f1 > "$file.sha1"
-          fi
-        done
-        
-        echo "📦 Files before bundling:"
-        ls -la
-        
-        # Create directory structure
-        mkdir -p io/github/simplesqlgen/simple-sql-generator/$VERSION
-        
-        # Copy all files (including signatures)
-        for ext in jar pom asc module md5 sha1; do
-          if ls *.$ext >/dev/null 2>&1; then
-            echo "📋 Copying *.$ext files"
-            cp *.$ext io/github/simplesqlgen/simple-sql-generator/$VERSION/
-          else
-            echo "⚠️ No .$ext files found"
-          fi
-        done
-        
-        echo "📦 Bundle directory contents:"
-        find io/ -type f | sort
-        
-        # Create ZIP bundle
-        zip -r simple-sql-generator-$VERSION-bundle.zip io/
-        echo "✅ Created bundle: simple-sql-generator-$VERSION-bundle.zip"
-        ls -la *.zip
-        
-        # Verify ZIP contents
-        echo "📋 ZIP contents:"
-        unzip -l simple-sql-generator-$VERSION-bundle.zip
-        
-    - name: Upload to GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}/simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip
-        body: |
-          ## 🚀 Release ${{ steps.extract_version.outputs.VERSION }}
+          cd "$MAVEN_DIR"
           
-          ### Maven Dependency
-          ```gradle
-          dependencies {
-              implementation 'io.github.simplesqlgen:simple-sql-generator:${{ steps.extract_version.outputs.VERSION }}'
-          }
-          ```
+          # Generate checksums for all artifacts
+          for file in *.jar *.pom *.asc *.module; do
+            if [ -f "$file" ]; then
+              md5sum "$file" | cut -d' ' -f1 > "$file.md5"
+              sha1sum "$file" | cut -d' ' -f1 > "$file.sha1"
+            fi
+          done
           
-          ### Manual Upload to Maven Central
-          1. Download the ZIP bundle from this release
-          2. Go to https://central.sonatype.com
-          3. Upload the ZIP file
-          4. Click Publish
-          
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
+          # Create ZIP bundle
+          mkdir -p io/github/simplesqlgen/simple-sql-generator/$VERSION
+          cp * io/github/simplesqlgen/simple-sql-generator/$VERSION/
+          zip -r simple-sql-generator-$VERSION-bundle.zip io/
+
+      - name: Upload bundle to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}/simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip
+          body: |
+            ## 🚀 Release ${{ steps.extract_version.outputs.VERSION }}
+            ### Maven Dependency
+            ```gradle
+            dependencies {
+                implementation 'io.github.simplesqlgen:simple-sql-generator:${{ steps.extract_version.outputs.VERSION }}'
+            }
+            ```
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
