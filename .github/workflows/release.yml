@@ -96,11 +96,14 @@ jobs:
           echo "✅ Created bundle: simple-sql-generator-$VERSION-bundle.zip"
           ls -la *.zip
 
+          # Move ZIP to workspace for upload
+          mv simple-sql-generator-$VERSION-bundle.zip $GITHUB_WORKSPACE/
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ~/.m2/repository/io/github/simplesqlgen/simple-sql-generator/${{ steps.extract_version.outputs.VERSION }}/simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip
+            simple-sql-generator-${{ steps.extract_version.outputs.VERSION }}-bundle.zip
           body: |
             ## 🚀 Release ${{ steps.extract_version.outputs.VERSION }}
             
